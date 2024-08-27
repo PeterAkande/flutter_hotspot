@@ -96,6 +96,8 @@ class HotspotProvider extends StatefulWidget {
     this.bodyPadding = const EdgeInsets.all(16),
     this.dismissibleSkrim = true,
     this.skrimCurve = Curves.easeOutExpo,
+    this.hotspotBorderColor,
+    this.hotspotBorderWidth,
   }) : super(key: key);
 
   /// The child which contains multiple [HotspotTarget] in the tree.
@@ -149,6 +151,12 @@ class HotspotProvider extends StatefulWidget {
 
   /// Curve for the skrim.
   final Curve skrimCurve;
+
+  /// Border color of the hotspot. if null, value is derived from the [hotspotShapeBorder] if it is an [OutlinedBorder].
+  final Color? hotspotBorderColor;
+
+  /// Width of the border of the hotspot. if null, value is derived from the [hotspotShapeBorder] if it is an [OutlinedBorder].
+  final num? hotspotBorderWidth;
 
   /// Retreive the ancestor [HotspotProvider] for the purpose of performing actions.
   static HotspotProviderState of(BuildContext context) =>
@@ -344,6 +352,8 @@ class HotspotProviderState extends State<HotspotProvider>
                 return CustomPaint(
                   painter: HotspotPainter(
                     hotspotBounds: t!,
+                    hotspotBorderColor: widget.hotspotBorderColor,
+                    hotspotBorderWidth: widget.hotspotBorderWidth,
                     shapeBorder: widget.hotspotShapeBorder,
                     skrimColor: widget.skrimColor ??
                         Theme.of(context).colorScheme.scrim.withOpacity(0.4),

@@ -21,8 +21,12 @@ class MyApp extends StatelessWidget {
         brightness: Brightness.dark,
         colorSchemeSeed: Colors.purple,
       ),
-      home: const HotspotProvider(
-        child: MyHomePage(title: 'Hotspot Demo Home Page'),
+      home: HotspotProvider(
+        hotspotShapeBorder: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(100),
+          side: const BorderSide(color: Colors.blue, width: 2),
+        ),
+        child: const MyHomePage(title: 'Hotspot Demo Home Page'),
       ),
     );
   }
