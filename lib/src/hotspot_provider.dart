@@ -352,9 +352,14 @@ class HotspotProviderState extends State<HotspotProvider>
                 return CustomPaint(
                   painter: HotspotPainter(
                     hotspotBounds: t!,
-                    hotspotBorderColor: widget.hotspotBorderColor,
-                    hotspotBorderWidth: widget.hotspotBorderWidth,
-                    shapeBorder: widget.hotspotShapeBorder,
+                    hotspotBorderColor:
+                        currentTarget.widget.hotspotBorderColor ??
+                            widget.hotspotBorderColor,
+                    hotspotBorderWidth:
+                        currentTarget.widget.hotspotBorderWidth ??
+                            widget.hotspotBorderWidth,
+                    shapeBorder: currentTarget.widget.hotspotShape ??
+                        widget.hotspotShapeBorder,
                     skrimColor: widget.skrimColor ??
                         Theme.of(context).colorScheme.scrim.withOpacity(0.4),
                   ),

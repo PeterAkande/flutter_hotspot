@@ -67,6 +67,10 @@ class _MyHomePageState extends State<MyHomePage> {
           order: 1,
           title: "Let's get started!",
           text: "We're going to give you an example tour with hotspot",
+          hotspotShape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(1),
+            side: const BorderSide(color: Colors.red, width: 2),
+          ),
         ),
         actions: [
           IconButton(
