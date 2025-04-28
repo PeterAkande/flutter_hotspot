@@ -18,13 +18,28 @@ class _PaintBoundsBuilderState extends State<PaintBoundsBuilder> {
 
   @override
   void initState() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      setState(() {
-        _paintBounds ??= (context.findRenderObject() as RenderBox).paintBounds;
-      });
-    });
-
+    _scheduleBoundsUpdate();
     super.initState();
+  }
+
+  @override
+  void didUpdateWidget(PaintBoundsBuilder oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Check for updates when the widget changes
+    _scheduleBoundsUpdate();
+  }
+
+  void _scheduleBoundsUpdate() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      final RenderObject? renderObj = context.findRenderObject();
+      if (renderObj != null && renderObj is RenderBox && renderObj.hasSize) {
+        setState(() {
+          _paintBounds = renderObj.paintBounds;
+        });
+      }
+    });
   }
 
   @override

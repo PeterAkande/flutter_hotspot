@@ -125,10 +125,31 @@ class HotspotTargetState extends State<HotspotTarget> {
     super.didChangeDependencies();
   }
 
+  @override
+  void didUpdateWidget(HotspotTarget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Notify HotspotProvider if anything changes
+    if (oldWidget.flow != widget.flow || oldWidget.order != widget.order) {
+      HotspotNotification(target: this).dispatch(context);
+    }
+  }
+
   /// Convenience getter to find the global paint bounds of this [HotspotTarget]
-  Rect get globalPaintBounds =>
-      (context.findRenderObject() as RenderBox).paintBounds.shift(
-          (context.findRenderObject() as RenderBox).localToGlobal(Offset.zero));
+  Rect get globalPaintBounds {
+    if (!mounted) return Rect.zero;
+
+    try {
+      final RenderBox renderBox = context.findRenderObject() as RenderBox;
+      if (!renderBox.hasSize) return Rect.zero;
+
+      final position = renderBox.localToGlobal(Offset.zero);
+      final size = renderBox.size;
+      return Rect.fromLTWH(position.dx, position.dy, size.width, size.height);
+    } catch (e) {
+      debugPrint('[Hotspot] Error calculating globalPaintBounds: $e');
+      return Rect.zero;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {

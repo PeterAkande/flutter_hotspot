@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:hotspot/hotspot.dart';
 import 'package:provider/provider.dart';
 
@@ -98,6 +99,11 @@ class HotspotProvider extends StatefulWidget {
     this.skrimCurve = Curves.easeOutExpo,
     this.hotspotBorderColor,
     this.hotspotBorderWidth,
+    this.autoScroll = true,
+    this.scrollDuration = const Duration(milliseconds: 500),
+    this.scrollAlignment = 0.5,
+    this.scrollTimeout = const Duration(seconds: 2),
+    this.skipInvisibleTargets = true,
   }) : super(key: key);
 
   /// The child which contains multiple [HotspotTarget] in the tree.
@@ -158,6 +164,21 @@ class HotspotProvider extends StatefulWidget {
   /// Width of the border of the hotspot. if null, value is derived from the [hotspotShapeBorder] if it is an [OutlinedBorder].
   final num? hotspotBorderWidth;
 
+  /// Whether to automatically scroll to targets that are not visible in the viewport.
+  final bool autoScroll;
+
+  /// Duration for the scroll animation.
+  final Duration scrollDuration;
+
+  /// Alignment used when scrolling to position targets (0.0 for top, 0.5 for center, 1.0 for bottom).
+  final double scrollAlignment;
+
+  /// Timeout for scrolling attempts before moving to the next target.
+  final Duration scrollTimeout;
+
+  /// Whether to automatically skip targets that cannot be scrolled into view.
+  final bool skipInvisibleTargets;
+
   /// Retreive the ancestor [HotspotProvider] for the purpose of performing actions.
   static HotspotProviderState of(BuildContext context) =>
       Provider.of<HotspotProviderState>(context, listen: false);
@@ -182,13 +203,34 @@ class HotspotProviderState extends State<HotspotProvider>
   /// put the focus back where it was.
   FocusNode? _lastFocusNode;
 
+  /// Track whether we're currently in a scrolling operation
+  bool _isScrolling = false;
+
+  /// Animation controller for position updates
+  late AnimationController _positionAnimationController;
+
+  @override
+  void initState() {
+    super.initState();
+    _positionAnimationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 100),
+    );
+  }
+
+  @override
+  void dispose() {
+    _positionAnimationController.dispose();
+    super.dispose();
+  }
+
   /// Convenience getter for the current flow sorted by order.
   List<HotspotTargetState> get currentFlow =>
       _targets.where((e) => e.widget.flow == _flow).toList()
         ..sort((a, b) => a.widget.order.compareTo(b.widget.order));
 
   /// Initiate a hotspot flow
-  void startFlow([String flow = 'main']) {
+  Future<void> startFlow([String flow = 'main']) async {
     /// Dismiss keyboard if open
     _lastFocusNode = FocusManager.instance.primaryFocus;
     _lastFocusNode?.unfocus();
@@ -208,15 +250,28 @@ class HotspotProviderState extends State<HotspotProvider>
         _visible = true;
       }
     });
+
+    // Give the UI a moment to render before attempting to scroll
+    if (widget.autoScroll && currentFlow.isNotEmpty) {
+      // Use a small delay to ensure everything is properly laid out
+      await Future.delayed(const Duration(milliseconds: 200));
+      await _ensureTargetVisibility(currentFlow[_index]);
+    }
   }
 
   /// Called when tapping the next button.
   /// Can be called externally.
-  void next() {
+  Future<void> next() async {
     _pruneUnmountedTargets();
 
     if (_index + 1 < currentFlow.length) {
       setState(() => _index++);
+
+      // Ensure the next target is visible if auto-scroll is enabled
+      if (widget.autoScroll) {
+        await Future.delayed(const Duration(milliseconds: 100));
+        await _ensureTargetVisibility(currentFlow[_index]);
+      }
     } else {
       dismiss();
     }
@@ -224,11 +279,17 @@ class HotspotProviderState extends State<HotspotProvider>
 
   /// Called when tapping the previous button.
   /// Can be called externally.
-  void previous() {
+  Future<void> previous() async {
     _pruneUnmountedTargets();
 
     if (_index >= 1) {
       setState(() => _index--);
+
+      // Ensure the previous target is visible if auto-scroll is enabled
+      if (widget.autoScroll) {
+        await Future.delayed(const Duration(milliseconds: 100));
+        await _ensureTargetVisibility(currentFlow[_index]);
+      }
     } else {
       dismiss();
     }
@@ -258,6 +319,240 @@ class HotspotProviderState extends State<HotspotProvider>
   void _handleNewTarget(HotspotTargetState e) {
     _targets.add(e);
     _pruneUnmountedTargets();
+  }
+
+  /// Checks if a target is visible in the viewport
+  bool _isTargetVisible(HotspotTargetState target) {
+    if (!target.mounted) return false;
+
+    try {
+      // Get the global paint bounds of the target
+      final targetBounds = target.globalPaintBounds;
+
+      // Get the viewport bounds
+      final viewportBounds = Rect.fromLTWH(
+        0,
+        0,
+        MediaQuery.of(context).size.width,
+        MediaQuery.of(context).size.height,
+      );
+
+      if (HotspotProvider.log) {
+        debugPrint(
+            '[Hotspot] checking visibility: ${target.widget.flow}:${target.widget.order}');
+        debugPrint(
+            '[Hotspot] target bounds: $targetBounds, viewport: $viewportBounds');
+      }
+
+      // Consider target visible if it's at least 30% visible in the viewport
+      final intersection = targetBounds.intersect(viewportBounds);
+      final visibleArea = intersection.width * intersection.height;
+      final targetArea = targetBounds.width * targetBounds.height;
+
+      final isVisible =
+          !intersection.isEmpty && (visibleArea / targetArea) > 0.3;
+
+      if (HotspotProvider.log) {
+        debugPrint(
+            '[Hotspot] target visibility: $isVisible (${(visibleArea / targetArea * 100).toStringAsFixed(1)}%)');
+      }
+
+      return isVisible;
+    } catch (e) {
+      debugPrint('[Hotspot] Error checking visibility: $e');
+      return false;
+    }
+  }
+
+  /// Attempts to scroll a target into view
+  Future<bool> _scrollTargetIntoView(HotspotTargetState target) async {
+    if (!target.mounted) return false;
+
+    if (HotspotProvider.log) {
+      debugPrint(
+          '[Hotspot] attempting to scroll to target: ${target.widget.flow}:${target.widget.order}');
+    }
+
+    try {
+      // Try to scroll the target into view with a timeout
+      return await Future.any([
+        _scrollToTarget(target),
+        Future.delayed(widget.scrollTimeout, () {
+          if (HotspotProvider.log) {
+            debugPrint('[Hotspot] scroll timeout reached');
+          }
+          return false;
+        })
+      ]);
+    } catch (e) {
+      if (HotspotProvider.log) {
+        debugPrint('[Hotspot] error scrolling to target: $e');
+      }
+      return false;
+    }
+  }
+
+  /// Performs the actual scrolling operation
+  Future<bool> _scrollToTarget(HotspotTargetState target) async {
+    try {
+      if (HotspotProvider.log) {
+        debugPrint(
+            '[Hotspot] scrolling to target: ${target.widget.flow}:${target.widget.order}');
+      }
+
+      _isScrolling = true;
+
+      // Find the actual scrollable ancestor
+      final ScrollableState? scrollable = Scrollable.of(target.context);
+
+      if (scrollable == null) {
+        if (HotspotProvider.log) {
+          debugPrint('[Hotspot] no scrollable found for target');
+        }
+        _isScrolling = false;
+        return _isTargetVisible(target);
+      }
+
+      // Get the initial position to detect if scrolling actually occurred
+      final initialPosition = scrollable.position.pixels;
+
+      // Try more directly to control the scrolling
+      final RenderObject? targetRenderObject =
+          target.context.findRenderObject();
+
+      if (targetRenderObject == null) {
+        _isScrolling = false;
+        return _isTargetVisible(target);
+      }
+
+      final RenderAbstractViewport? viewport =
+          RenderAbstractViewport.of(targetRenderObject);
+
+      if (viewport == null) {
+        if (HotspotProvider.log) {
+          debugPrint('[Hotspot] no viewport found for target');
+        }
+        _isScrolling = false;
+        return _isTargetVisible(target);
+      }
+
+      // Calculate the scroll offset needed
+      await scrollable.position.ensureVisible(
+        targetRenderObject,
+        alignment: widget.scrollAlignment,
+        duration: widget.scrollDuration,
+        curve: widget.curve,
+      );
+
+      // Check if scrolling actually occurred
+      final didScroll = scrollable.position.pixels != initialPosition;
+
+      if (didScroll) {
+        // Wait for layout to settle after scrolling
+        await Future.delayed(const Duration(milliseconds: 300));
+
+        // Force a rebuild to update the hotspot position
+        if (mounted) {
+          // Reset animation controller
+          _positionAnimationController.reset();
+
+          // Start the animation to update position smoothly
+          _positionAnimationController.forward();
+
+          setState(() {
+            // Just trigger a rebuild to recalculate target positions
+          });
+        }
+      }
+
+      // Wait a bit more to ensure animations complete
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      _isScrolling = false;
+
+      // Check if target is now visible
+      final isVisible = _isTargetVisible(target);
+      if (HotspotProvider.log) {
+        debugPrint('[Hotspot] after scrolling, target visibility: $isVisible');
+      }
+      return isVisible;
+    } catch (e) {
+      debugPrint('[Hotspot] error in scroll operation: $e');
+      _isScrolling = false;
+
+      // Fallback to standard method if custom approach fails
+      try {
+        await Scrollable.ensureVisible(
+          target.context,
+          alignment: widget.scrollAlignment,
+          duration: widget.scrollDuration,
+          curve: widget.curve,
+        );
+
+        // Wait for layout to settle after scrolling
+        await Future.delayed(const Duration(milliseconds: 300));
+
+        // Force a rebuild to update the hotspot position
+        if (mounted) {
+          // Reset animation controller
+          _positionAnimationController.reset();
+
+          // Start the animation to update position smoothly
+          _positionAnimationController.forward();
+
+          setState(() {
+            // Just trigger a rebuild to recalculate target positions
+          });
+        }
+
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        return _isTargetVisible(target);
+      } catch (e) {
+        debugPrint('[Hotspot] fallback scroll method also failed: $e');
+        return _isTargetVisible(target);
+      }
+    }
+  }
+
+  /// Ensures target visibility, skipping to next target if needed
+  Future<void> _ensureTargetVisibility(HotspotTargetState target) async {
+    if (!target.mounted) return;
+
+    if (HotspotProvider.log) {
+      debugPrint(
+          '[Hotspot] ensuring visibility of target: ${target.widget.flow}:${target.widget.order}');
+    }
+
+    if (!_isTargetVisible(target)) {
+      final scrolled = await _scrollTargetIntoView(target);
+
+      // Ensure we force a rebuild after scrolling to update positions
+      if (scrolled && mounted) {
+        // Reset animation controller
+        _positionAnimationController.reset();
+
+        // Start the animation to update position smoothly
+        _positionAnimationController.forward();
+
+        setState(() {
+          // This will trigger a rebuild with the latest positions
+        });
+      }
+
+      // If target can't be scrolled into view and auto-skip is enabled, go to next target
+      if (!scrolled &&
+          widget.skipInvisibleTargets &&
+          _index + 1 < currentFlow.length) {
+        if (HotspotProvider.log) {
+          debugPrint(
+              '[Hotspot] target not visible after scrolling, skipping to next target');
+        }
+        await next();
+      }
+    } else if (HotspotProvider.log) {
+      debugPrint('[Hotspot] target already visible, no need to scroll');
+    }
   }
 
   Color get bg =>
@@ -298,11 +593,15 @@ class HotspotProviderState extends State<HotspotProvider>
                     } else {
                       return PaintBoundsBuilder(
                         builder: (context, paintBounds) {
+                          // Always get fresh position data when building
+                          final targetBounds =
+                              _getUpdatedTargetBounds(currentTarget);
+
                           final delegate = CalloutLayoutDelegate(
                             tailSize: widget.tailSize,
                             tailInsets: widget.tailInsets,
                             paintBounds: paintBounds,
-                            targetBounds: currentTarget.globalPaintBounds,
+                            targetBounds: targetBounds,
                             hotspotPadding: widget.padding,
                             bodyMargin: widget.bodyMargin,
                             bodyWidth: widget.bodyWidth,
@@ -326,6 +625,26 @@ class HotspotProviderState extends State<HotspotProvider>
         ),
       ),
     );
+  }
+
+  /// Get fresh target bounds, ensuring we have the most up-to-date position
+  Rect _getUpdatedTargetBounds(HotspotTargetState target) {
+    if (!target.mounted) {
+      return Rect.zero;
+    }
+
+    try {
+      // Force a fresh calculation of the global paint bounds
+      final RenderBox renderBox =
+          target.context.findRenderObject() as RenderBox;
+      final position = renderBox.localToGlobal(Offset.zero);
+      final size = renderBox.size;
+      return Rect.fromLTWH(position.dx, position.dy, size.width, size.height);
+    } catch (e) {
+      debugPrint('[Hotspot] Error getting updated bounds: $e');
+      // Fall back to the original method if there's an error
+      return target.globalPaintBounds;
+    }
   }
 
   /// Build the hotspot and callout
