@@ -290,6 +290,22 @@ class _ListExamplePageViewState extends State<ListExamplePageView> {
               title: 'Item #16',
               text: 'Notice how the page automatically scrolls to show items',
             );
+          } else if (index == 18) {
+            return Card(
+              elevation: 2,
+              color: Colors.amber.withOpacity(0.1),
+              child: ListTile(
+                title: Text(items[index],
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
+                leading: const Icon(Icons.lightbulb, color: Colors.amber),
+                subtitle: const Text('This is much farther down the list'),
+              ),
+            ).withHotspot(
+              flow: 'list',
+              order: 8,
+              title: 'Item #18',
+              text: 'Notice how the page automatically scrolls to show items',
+            );
           } else if (index == 40) {
             return Card(
               elevation: 2,
